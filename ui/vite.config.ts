@@ -33,4 +33,16 @@ export default defineConfig({
 
   // File types to support raw imports. Never add .css, .tsx, or .ts files to this.
   assetsInclude: ['**/*.svg', '**/*.csv'],
+
+  // Required for Cloud Shell Web Preview. It serves the browser from
+  // https://5173-cs-....cloudshell.dev while vite listens locally, so vite's
+  // host check rejects it as an unknown host and the page never loads.
+  // allowedHosts: true is safe here -- the dev server is only reachable through
+  // Google's authenticated Cloud Shell proxy.
+  server: {
+    host: true,
+    port: 5173,
+    strictPort: true,
+    allowedHosts: true,
+  },
 })

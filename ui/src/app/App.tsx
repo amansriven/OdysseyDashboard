@@ -5,34 +5,17 @@ import {
   Accessibility, BellRing, BellOff, X, Type, DollarSign, Calendar, Info, ArrowUpRight,
   Eye, Building2, Pill, Zap, Target, Briefcase, ChevronDown, Filter
 } from "lucide-react";
+import dashboardData from "../data/claims.json";
 
 type View = "member" | "representative";
 type TextSize = "normal" | "large" | "xl";
 type Tab = "overview" | "claims" | "issues";
 
-const MEMBER = {
-  name: "Sarah M. Johnson",
-  first: "Sarah",
-  id: "H4832-09177",
-  plan: "Humana Gold Plus HMO"
-};
+const MEMBER = dashboardData.member;
 
-const CLAIMS = [
-  { id: "CLM-2025-0047823", member: "Sarah M. Johnson", dob: "04/15/1978", service: "Knee replacement surgery", date: "01/16/2025", status: "inprogress", provider: "Orthopedic Associates", billed: 34850, planPaid: null, youOwe: null, issue: "Missing authorization", fix: "Submit retro-authorization", risk: "high" },
-  { id: "CLM-2025-0041122", member: "Sarah M. Johnson", dob: "04/15/1978", service: "Prescription fill", date: "12/04/2024", status: "completed", provider: "CVS Pharmacy #4471", billed: 120, planPaid: 108, youOwe: 12, issue: null, fix: null, risk: "low" },
-  { id: "CLM-2025-0049901", member: "Sarah M. Johnson", dob: "04/15/1978", service: "Outpatient facility visit", date: "01/20/2025", status: "pending", provider: "Norton Brownsboro Hospital", billed: 12400, planPaid: null, youOwe: null, issue: null, fix: null, risk: "medium" },
-  { id: "CLM-2025-0044210", member: "Robert Chen", dob: "09/22/1961", service: "Cardiac stress test", date: "01/08/2025", status: "denied", provider: "Louisville Cardiology", billed: 8730, planPaid: 0, youOwe: 0, issue: "Duplicate claim (CO-97)", fix: "File corrected claim", risk: "high" },
-  { id: "CLM-2025-0038876", member: "Maria Lopez", dob: "02/03/1985", service: "MRI - lumbar spine", date: "11/21/2024", status: "inprogress", provider: "Baptist Health Imaging", billed: 2150, planPaid: null, youOwe: null, issue: "Missing medical records", fix: "Send medical records", risk: "medium" },
-];
+const CLAIMS: any[] = dashboardData.claims;
 
-const BENEFITS = {
-  primaryCare: 0,
-  specialist: 35,
-  emergencyRoom: 120,
-  tier1Drugs: 12,
-  outOfPocketMax: 4900,
-  outOfPocketUsed: 1240,
-};
+const BENEFITS: any = dashboardData.benefits;
 
 const money = (n: number | null) => n == null ? "—" : `$${n.toLocaleString()}`;
 
