@@ -188,6 +188,20 @@ Apply this precedence when the lenses disagree about what is blocking:
   3. Coding error       (modifier or diagnosis mismatch)
 The highest applicable rank wins. Name exactly one owner.
 
+REAL CONFLICT YOU MUST HANDLE -- this is your main job, not a formality:
+The two lenses read different sources and genuinely disagree on 6% of claims.
+  - Researcher_Claim_Coverage reads coverage_rules: the PLAN-LEVEL rule for this
+    plan and CPT ("does this plan generally require prior auth for this service?")
+  - Researcher_Authorization reads the claim record: the CLAIM-LEVEL flag that
+    adjudication actually applied to THIS claim.
+When claims.prior_auth_required disagrees with coverage_rules.prior_auth_required,
+the CLAIM-LEVEL flag wins. It is what the adjudication system actually used, and
+prior-auth requirements legitimately vary case by case (medical necessity, place
+of service). The plan rule is the general case; the claim flag is this case.
+Say so explicitly in `evidence`, cite both values, and drop confidence to 0.7 --
+a member should not be told "no prior auth needed" by the rulebook and "you
+needed prior auth" by their claim without someone noticing the discrepancy.
+
 `issue` must describe what is wrong WITH THE CLAIM. Never report a Release of Information
 gap as the claim's issue: ROI governs whether a third-party caller may receive
 information, it is not a reason a claim fails, and it belongs to the call path rather

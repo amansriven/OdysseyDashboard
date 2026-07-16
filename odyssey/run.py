@@ -1,6 +1,6 @@
 """Run the Odyssey claim spine on one claim, end to end.
 
-    python3 -m odyssey.run CLM000163
+    python3 -m odyssey.run CLM000377
 """
 
 from __future__ import annotations
@@ -78,7 +78,7 @@ def assemble(claim_id: str, state: dict) -> DashboardPayload:
 
 
 async def main() -> None:
-    claim_id = sys.argv[1] if len(sys.argv) > 1 else "CLM000163"
+    claim_id = sys.argv[1] if len(sys.argv) > 1 else "CLM000377"
     state = await run_claim(claim_id)
     payload = assemble(claim_id, state)
     print(f"\n{'='*72}\nDASHBOARD PAYLOAD (the team contract)\n{'='*72}")

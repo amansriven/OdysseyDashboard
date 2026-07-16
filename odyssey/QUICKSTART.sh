@@ -16,13 +16,20 @@ cat <<'BANNER'
 
   1) RUN THE CLAIM PIPELINE (terminal, ~75s)
      -----------------------------------------------------------------
-     cd ~ && python3 -m odyssey.run CLM000163      # the hero claim:
-                                                   # pending, prior-auth gap,
-                                                   # denial caught before it happens
+     cd ~ && python3 -m odyssey.run CLM000377      # THE HERO CLAIM:
+                                                   # MAPD, Total Knee Arthroplasty,
+                                                   # pending, prior auth required but
+                                                   # not obtained -> denial caught
+                                                   # BEFORE it happens.
+                                                   # Rulebook RULE0075 agrees, so the
+                                                   # story holds up under scrutiny.
      Other claims worth trying:
        CLM000003   a DENIED claim -> deterministic remedy lookup
-       CLM000297   another pending prior-auth gap
+       CLM000493   another consistent pending prior-auth gap
        CLM000001   a clean claim -> Issue_Detector correctly says NONE
+
+     AVOID as demo claims (data contradicts itself, 6% of claims do):
+       CLM000163 / CLM000831  claim says prior auth required, rulebook says not
 
   2) SEE THE AGENTS IN A UI (the demo surface)
      -----------------------------------------------------------------
@@ -32,7 +39,7 @@ cat <<'BANNER'
            -> "Preview on port 8080"
 
      Pick an app from the dropdown:
-       odyssey_claim       "Process claim CLM000163."
+       odyssey_claim       "Process claim CLM000377."
        odyssey_benefits    "Does CPT 29881 need prior auth on a DSNP plan?"
        odyssey_compliance  "What ROI_AUTHORIZATION_GAP flags need attention today?"
 
