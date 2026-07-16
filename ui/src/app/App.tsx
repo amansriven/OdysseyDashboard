@@ -6,6 +6,7 @@ import {
   Eye, Building2, Pill, Zap, Target, Briefcase, ChevronDown, Filter
 } from "lucide-react";
 import dashboardData from "../data/claims.json";
+import ChatBot from "./components/ChatBot";
 
 type View = "member" | "representative";
 type TextSize = "normal" | "large" | "xl";
@@ -680,6 +681,9 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Chatbot */}
+      <ChatBot />
     </div>
   );
 }
