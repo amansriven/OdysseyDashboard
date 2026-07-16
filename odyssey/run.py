@@ -56,9 +56,10 @@ def assemble(claim_id: str, state: dict) -> DashboardPayload:
     risk = tools.compute_call_risk_score(claim_id)
     escalated = bool(state.get("escalated"))
 
-    roi = tools.check_roi(claim["member_id"], "")
-    roi_map = {"SELF": "Member (self)", "ON_FILE": "On File",
-               "EXPIRED": "Expired", "NOT_ON_FILE": "Not On File"}
+    # Dashboard ROI: who may call for this member. NOT check_roi -- there is no
+    # caller on this path, and asking that question here is what produced the
+    # "Not On File" nonsense in the first run.
+    roi = tools.get_roi_summary(claim["member_id"])
 
     days = claim.get("reprocessing_days_est")
     return DashboardPayload(
@@ -69,7 +70,7 @@ def assemble(claim_id: str, state: dict) -> DashboardPayload:
         owner=verdict.get("owner"),
         next_step=(state.get("resolution") or "Referred to a representative.").strip(),
         estimated_resolution=f"{int(float(days))} days" if days else "Not yet determined",
-        roi_status=roi_map.get(roi["status"], "Not On File"),
+        roi_status=roi["status"],
         call_risk_score=risk["call_risk_score"],               # deterministic heuristic
         escalated=escalated,
         case_summary=(state.get("case_summary") or "").strip() or None,

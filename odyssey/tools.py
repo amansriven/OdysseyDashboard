@@ -181,6 +181,53 @@ def check_roi(member_id: str, caller_name: str) -> dict:
             "reason": f"Authorised as {rec.get('relationship')}, valid to {rec.get('expiration_date')}."}
 
 
+def get_roi_summary(member_id: str) -> dict:
+    """Who is authorised to call on this member's behalf?
+
+    This is the DASHBOARD view of ROI, and it is a different question from check_roi.
+    check_roi answers "may this caller receive information?" on the call path.
+    This answers "who could call for me, and is anything about to lapse?" -- the
+    proactive half of the ROI use case: telling a member their authorisation is
+    missing BEFORE a family member calls and gets refused.
+    """
+    member = data.row("members", "member_id", member_id)
+    if member is None:
+        return {"error": f"No member {member_id}"}
+
+    df = data.table("roi_authorizations")
+    rows = [_clean(r) for r in df[df["member_id"] == member_id].to_dict("records")]
+
+    active, expired = [], []
+    for r in rows:
+        lapsed = bool(r.get("auth_expired")) or (
+            r.get("expiration_date") is not None
+            and date.fromisoformat(r["expiration_date"]) < date.today()
+        )
+        if r.get("auth_on_file") and not lapsed:
+            active.append(r)
+        elif r.get("auth_on_file") and lapsed:
+            expired.append(r)
+
+    if active:
+        status = "On File"
+        note = ", ".join(f"{r['authorized_caller_name']} ({r['relationship']})" for r in active)
+    elif expired:
+        status = "Expired"
+        note = ("Authorisation lapsed for "
+                + ", ".join(f"{r['authorized_caller_name']} (expired {r['expiration_date']})"
+                            for r in expired)
+                + ". A renewed ROI form is needed before they can be helped.")
+    else:
+        status = "Not On File"
+        note = ("Nobody is authorised to call on this member's behalf. If a family member "
+                "needs to call, a signed ROI form must be filed first -- verbal consent "
+                "is not sufficient.")
+
+    return {"member_id": member_id, "status": status, "detail": note,
+            "authorized_callers": [r["authorized_caller_name"] for r in active],
+            "expired_count": len(expired)}
+
+
 def get_compliance_flags(entity_id: str = "", flag_type: str = "", severity: str = "") -> dict:
     """Operational and compliance risk flags. All 312 are unresolved -- a live work queue.
 
