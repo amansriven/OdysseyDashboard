@@ -60,6 +60,15 @@ def _model() -> Gemini:
 
 MODEL = _model()
 
+NO_MATH = """
+NEVER STATE A NUMBER YOU WERE NOT GIVEN. Do not calculate durations, ages, totals,
+or dates -- you will get them wrong. Copy numbers verbatim from tool output, or omit
+them. get_claim supplies days_since_service, days_since_submitted and filing_lag_days
+already computed. A previous version invented "in review for 103 days" when the real
+figure was 139 and told a member that about their knee surgery.
+"""
+
+
 
 # --------------------------------------------------------------------------
 # 1. Claim-Summarizer
@@ -76,6 +85,7 @@ Call get_claim with the claim_id you are given, then get_member for its member_i
 Write `what_happened` as two short sentences in plain English. No jargon, no CPT
 codes, no denial codes -- say "an MRI of the lower back", not "72148". Never invent
 a fact that is not in the tool output.
+""" + NO_MATH + """
 """,
     tools=[tools.get_claim, tools.get_member],
     output_schema=ClaimSummary,
@@ -290,6 +300,7 @@ Three short sections, nothing else:
 Be concrete. Cite claim id, dates, and codes here -- your reader is a professional, not
 the member. If something is genuinely unknown, say so plainly; a rep misled by a
 confident guess is worse off than one told the truth.
+""" + NO_MATH + """
 """,
     output_key="case_summary",
 )
