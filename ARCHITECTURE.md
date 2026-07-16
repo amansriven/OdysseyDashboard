@@ -1,4 +1,4 @@
-# Humana JourneyAI — Agent Architecture
+# Odyssey — Agent Architecture
 
 **Prompt 1: Call Center "Claim Story AI: Proactive Member & Claims Intelligence System"**
 Built on the Google Agent Development Kit (ADK).
