@@ -12,11 +12,22 @@ cd ~/OdysseyDashboard && git pull
 ```
 
 ### 2. Set Environment Variables
+
+**Quick way (recommended):**
+```bash
+cd ~/OdysseyDashboard
+source ~/odyssey/QUICKSTART.sh
+```
+
+This sets all required environment variables automatically.
+
+**Manual way:**
 ```bash
 export GOOGLE_GENAI_USE_VERTEXAI=TRUE
 export GOOGLE_CLOUD_PROJECT=qwiklabs-gcp-03-73322a4eafa0
 export GOOGLE_CLOUD_LOCATION=us-central1
 export ODYSSEY_DATA=~/data
+export PYTHONPATH=$HOME
 ```
 
 **Optional:** Add to `~/.bashrc` to persist across sessions:
@@ -25,6 +36,7 @@ echo 'export GOOGLE_GENAI_USE_VERTEXAI=TRUE' >> ~/.bashrc
 echo 'export GOOGLE_CLOUD_PROJECT=qwiklabs-gcp-03-73322a4eafa0' >> ~/.bashrc
 echo 'export GOOGLE_CLOUD_LOCATION=us-central1' >> ~/.bashrc
 echo 'export ODYSSEY_DATA=~/data' >> ~/.bashrc
+echo 'export PYTHONPATH=$HOME' >> ~/.bashrc
 ```
 
 ### 3. Install Python Dependencies
