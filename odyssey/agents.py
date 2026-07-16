@@ -19,15 +19,29 @@ from __future__ import annotations
 
 from typing import AsyncGenerator
 
-from google.adk.agents import BaseAgent, LlmAgent, ParallelAgent, SequentialAgent
+from google.adk.agents import BaseAgent, LlmAgent, SequentialAgent
 from google.adk.agents.invocation_context import InvocationContext
 from google.adk.events import Event
+from google.adk.workflow._retry_config import RetryConfig
 from typing_extensions import override
 
 from . import tools
 from .schemas import ClaimSummary, DetectedIssue, ResearchFinding, Verdict
 
 MODEL = "gemini-2.5-flash"
+
+# This project's Vertex quota tolerates sequential load fine (12 requests in 9s,
+# zero failures) but starts dropping requests somewhere between 4 and 8
+# CONCURRENT ones. Measured, not guessed. Retry covers transient bursts; the
+# researchers running sequentially (see below) removes the only real source of
+# concurrency we had.
+RETRY = RetryConfig(
+    max_attempts=4,
+    initial_delay=2.0,
+    max_delay=20.0,
+    backoff_factor=2.0,
+    jitter=0.3,
+)
 
 
 # --------------------------------------------------------------------------
@@ -36,6 +50,7 @@ MODEL = "gemini-2.5-flash"
 claim_summarizer = LlmAgent(
     name="Claim_Summarizer",
     model=MODEL,
+    retry_config=RETRY,
     description="Turns a raw claim row into a plain-language summary.",
     instruction="""You summarise one health-insurance claim for a member who has no
 industry knowledge.
@@ -58,6 +73,7 @@ a fact that is not in the tool output.
 issue_detector = LlmAgent(
     name="Issue_Detector",
     model=MODEL,
+    retry_config=RETRY,
     description="Identifies the claim's problem. Predicts it when adjudication has not happened yet.",
     instruction="""You identify what is wrong with a claim. You detect only -- you never
 decide who fixes it or how.
@@ -85,11 +101,12 @@ Put the exact field names and values you relied on in `evidence`.
 
 
 # --------------------------------------------------------------------------
-# 3. Researchers -- parallel, different lenses on the same claim
+# 3. Researchers -- two lenses on the same claim, run one after the other
 # --------------------------------------------------------------------------
 researcher_claim = LlmAgent(
     name="Researcher_Claim_Coverage",
     model=MODEL,
+    retry_config=RETRY,
     description="Investigates the claim and coverage side.",
     instruction="""You investigate the CLAIM AND COVERAGE side of a claim's problem.
 Set lens="claim_coverage".
@@ -110,6 +127,7 @@ than guessing.
 researcher_auth = LlmAgent(
     name="Researcher_Authorization",
     model=MODEL,
+    retry_config=RETRY,
     description="Investigates the prior-authorisation and operational-risk side.",
     instruction="""You investigate the AUTHORISATION side of a claim's problem.
 Set lens="auth_risk".
@@ -133,11 +151,21 @@ Put every field value you actually inspected in `fields_checked`.
     output_key="finding_auth",
 )
 
-researchers = ParallelAgent(
+researchers = SequentialAgent(
     name="Researchers",
-    description="Claim/coverage and auth/ROI lenses, run simultaneously.",
+    description="Claim/coverage and authorisation lenses.",
     sub_agents=[researcher_claim, researcher_auth],
 )
+# Deliberately SEQUENTIAL, not ParallelAgent.
+#
+# Running these two in parallel was the original design and it was the sole cause
+# of our 429s. Each researcher makes 2-3 tool round-trips, so two in flight puts
+# 6-8 requests on the wire at once -- measured to be exactly where this project's
+# quota starts dropping them (2 and 4 concurrent are fine; 8 loses half).
+#
+# The cost is about five seconds of latency. The benefit is a demo that does not
+# die in front of judges. If this ever runs against production-tier quota,
+# ParallelAgent is a one-word change back.
 
 
 # --------------------------------------------------------------------------
@@ -146,6 +174,7 @@ researchers = ParallelAgent(
 mediator = LlmAgent(
     name="Mediator",
     model=MODEL,
+    retry_config=RETRY,
     description="Reconciles both research lenses into a single verdict.",
     instruction="""You reconcile two independent investigations into ONE verdict.
 
@@ -189,6 +218,7 @@ Cite the field values you relied on in `evidence`.
 error_fixer = LlmAgent(
     name="Error_Fixer",
     model=MODEL,
+    retry_config=RETRY,
     description="Renders the deterministic remedy into member-specific plain language.",
     instruction="""The issue is resolvable. Write the instruction the member or provider
 needs.
@@ -210,6 +240,7 @@ directly. Keep it under four sentences. No jargon.
 escalation_flag = LlmAgent(
     name="Escalation_Flag",
     model=MODEL,
+    retry_config=RETRY,
     description="Builds a rep-ready case summary for a claim that needs a human.",
     instruction="""This claim needs a representative. Write the summary they will read
 before they speak, so they open the call already knowing the situation.
@@ -283,6 +314,7 @@ claim_spine = SequentialAgent(
 benefits_navigator = LlmAgent(
     name="Benefits_Navigator",
     model=MODEL,
+    retry_config=RETRY,
     description="Answers prospective benefits questions: is it covered, does it need "
                 "prior auth, what will it cost. No claim involved.",
     instruction="""You answer benefits questions for members and representatives, before
@@ -305,6 +337,7 @@ pay. Two or three sentences.
 compliance_sentinel = LlmAgent(
     name="Compliance_Sentinel",
     model=MODEL,
+    retry_config=RETRY,
     description="Triages open operational and compliance risk for the ops team.",
     instruction="""You triage open compliance and operational risk flags for an
 operations team.
