@@ -100,11 +100,29 @@ def get_claim(claim_id: str) -> dict:
     Returns the full claim record including the fields needed to predict a
     denial before adjudication: referral_on_file, prior_auth_required,
     prior_auth_obtained, modifier_mismatch, service_date, submitted_date.
+
+    Durations are PRE-COMPUTED here (days_since_service, days_since_submitted,
+    filing_lag_days) because models do date arithmetic badly. An earlier version
+    exposed only raw dates and the agent told a member their claim had been in
+    review for "103 days" -- a number matching nothing in the data (the real
+    figures were 144 and 139). If a duration is needed, it comes from here.
     """
     rec = data.row("claims", "claim_id", claim_id)
     if rec is None:
         return {"error": f"No claim {claim_id}"}
-    return _clean(rec)
+    out = _clean(rec)
+
+    today = date.today()
+    if out.get("service_date"):
+        out["days_since_service"] = (today - date.fromisoformat(out["service_date"])).days
+    if out.get("submitted_date"):
+        out["days_since_submitted"] = (today - date.fromisoformat(out["submitted_date"])).days
+        if out.get("service_date"):
+            out["filing_lag_days"] = (
+                date.fromisoformat(out["submitted_date"])
+                - date.fromisoformat(out["service_date"])
+            ).days
+    return out
 
 
 def get_member(member_id: str) -> dict:

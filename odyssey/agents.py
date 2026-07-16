@@ -22,26 +22,43 @@ from typing import AsyncGenerator
 from google.adk.agents import BaseAgent, LlmAgent, SequentialAgent
 from google.adk.agents.invocation_context import InvocationContext
 from google.adk.events import Event
-from google.adk.workflow._retry_config import RetryConfig
+from google.adk.models.google_llm import Gemini
+from google.genai import types
 from typing_extensions import override
 
 from . import tools
 from .schemas import ClaimSummary, DetectedIssue, ResearchFinding, Verdict
 
-MODEL = "gemini-2.5-flash"
 
-# This project's Vertex quota tolerates sequential load fine (12 requests in 9s,
-# zero failures) but starts dropping requests somewhere between 4 and 8
-# CONCURRENT ones. Measured, not guessed. Retry covers transient bursts; the
-# researchers running sequentially (see below) removes the only real source of
-# concurrency we had.
-RETRY = RetryConfig(
-    max_attempts=4,
-    initial_delay=2.0,
-    max_delay=20.0,
-    backoff_factor=2.0,
-    jitter=0.3,
-)
+def _model() -> Gemini:
+    """Gemini with 429 retry that actually fires.
+
+    NOTE: LlmAgent also has a `retry_config` field. Do not use it -- it is only
+    consumed by ADK's workflow node runner (tools/_node_tool.py), so under a
+    plain Runner it is silently dead config. This was verified the hard way: a
+    pipeline with retry_config on all 9 agents still died on a 429.
+
+    retry_options here reaches the underlying genai client, which is the layer
+    that actually sees the HTTP 429.
+
+    This project's Vertex quota is a rolling per-minute window: sequential calls
+    are fine (12 in 9s, zero failures), bursts above ~4 concurrent get dropped,
+    and it recovers within ~30s. Measured, not guessed.
+    """
+    return Gemini(
+        model="gemini-2.5-flash",
+        retry_options=types.HttpRetryOptions(
+            attempts=6,
+            initial_delay=2.0,
+            max_delay=45.0,
+            exp_base=2.0,
+            jitter=0.4,
+            http_status_codes=[429, 502, 503, 504],
+        ),
+    )
+
+
+MODEL = _model()
 
 
 # --------------------------------------------------------------------------
@@ -50,7 +67,6 @@ RETRY = RetryConfig(
 claim_summarizer = LlmAgent(
     name="Claim_Summarizer",
     model=MODEL,
-    retry_config=RETRY,
     description="Turns a raw claim row into a plain-language summary.",
     instruction="""You summarise one health-insurance claim for a member who has no
 industry knowledge.
@@ -73,7 +89,6 @@ a fact that is not in the tool output.
 issue_detector = LlmAgent(
     name="Issue_Detector",
     model=MODEL,
-    retry_config=RETRY,
     description="Identifies the claim's problem. Predicts it when adjudication has not happened yet.",
     instruction="""You identify what is wrong with a claim. You detect only -- you never
 decide who fixes it or how.
@@ -106,7 +121,6 @@ Put the exact field names and values you relied on in `evidence`.
 researcher_claim = LlmAgent(
     name="Researcher_Claim_Coverage",
     model=MODEL,
-    retry_config=RETRY,
     description="Investigates the claim and coverage side.",
     instruction="""You investigate the CLAIM AND COVERAGE side of a claim's problem.
 Set lens="claim_coverage".
@@ -127,7 +141,6 @@ than guessing.
 researcher_auth = LlmAgent(
     name="Researcher_Authorization",
     model=MODEL,
-    retry_config=RETRY,
     description="Investigates the prior-authorisation and operational-risk side.",
     instruction="""You investigate the AUTHORISATION side of a claim's problem.
 Set lens="auth_risk".
@@ -174,7 +187,6 @@ researchers = SequentialAgent(
 mediator = LlmAgent(
     name="Mediator",
     model=MODEL,
-    retry_config=RETRY,
     description="Reconciles both research lenses into a single verdict.",
     instruction="""You reconcile two independent investigations into ONE verdict.
 
@@ -232,7 +244,6 @@ Cite the field values you relied on in `evidence`.
 error_fixer = LlmAgent(
     name="Error_Fixer",
     model=MODEL,
-    retry_config=RETRY,
     description="Renders the deterministic remedy into member-specific plain language.",
     instruction="""The issue is resolvable. Write the instruction the member or provider
 needs.
@@ -246,6 +257,15 @@ Call get_remedy with the denial_code if there is one. THE REMEDY TEXT IS AUTHORI
 Your only job is to make it specific and human: name the actual service and date
 ("your MRI on 17 May with Dr Thomas") instead of leaving it generic. Address the owner
 directly. Keep it under four sentences. No jargon.
+
+NEVER STATE A NUMBER YOU WERE NOT GIVEN.
+Do not calculate durations, ages, totals, or dates. Do not work out how long a claim
+has been open by subtracting dates -- you will get it wrong. get_claim already gives
+you days_since_service, days_since_submitted and filing_lag_days; use those verbatim
+or say nothing about elapsed time.
+This is not a style rule. A previous version computed "in review for 103 days" when
+the real figure was 139, and told a member that about their knee surgery. Every number
+you write must be copied from tool output.
 """,
     tools=[tools.get_remedy],
     output_key="resolution",
@@ -254,7 +274,6 @@ directly. Keep it under four sentences. No jargon.
 escalation_flag = LlmAgent(
     name="Escalation_Flag",
     model=MODEL,
-    retry_config=RETRY,
     description="Builds a rep-ready case summary for a claim that needs a human.",
     instruction="""This claim needs a representative. Write the summary they will read
 before they speak, so they open the call already knowing the situation.
@@ -328,7 +347,6 @@ claim_spine = SequentialAgent(
 benefits_navigator = LlmAgent(
     name="Benefits_Navigator",
     model=MODEL,
-    retry_config=RETRY,
     description="Answers prospective benefits questions: is it covered, does it need "
                 "prior auth, what will it cost. No claim involved.",
     instruction="""You answer benefits questions for members and representatives, before
@@ -351,7 +369,6 @@ pay. Two or three sentences.
 compliance_sentinel = LlmAgent(
     name="Compliance_Sentinel",
     model=MODEL,
-    retry_config=RETRY,
     description="Triages open operational and compliance risk for the ops team.",
     instruction="""You triage open compliance and operational risk flags for an
 operations team.

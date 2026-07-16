@@ -33,10 +33,18 @@ cat <<'BANNER'
 
   2) SEE THE AGENTS IN A UI (the demo surface)
      -----------------------------------------------------------------
-     cd ~ && adk web ~/adk_apps --port 8080
+     cd ~ && adk web ~/adk_apps --port 8080 --allow_origins="*"
+
+     --allow_origins IS REQUIRED IN CLOUD SHELL. Web Preview serves your browser
+     from https://8080-cs-....cloudshell.dev while the server listens on
+     127.0.0.1, so every request is cross-origin. Without the flag ADK returns
+     403 Forbidden on session creation and nothing runs. Safe here: dev server,
+     bound to localhost, only reachable through Google's authenticated proxy.
 
      Then: click "Web Preview" (top-right, the <> icon)
            -> "Preview on port 8080"
+
+     If the port is already taken:  fuser -k 8080/tcp
 
      Pick an app from the dropdown:
        odyssey_claim       "Process claim CLM000377."
