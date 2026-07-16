@@ -1,0 +1,11 @@
+# deps -- never commit these; reinstall with `npm i`
+node_modules/
+.vite/
+dist/
+
+# python
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
