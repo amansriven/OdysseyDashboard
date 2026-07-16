@@ -21,7 +21,7 @@ from typing import AsyncGenerator
 
 from google.adk.agents import BaseAgent, LlmAgent, SequentialAgent
 from google.adk.agents.invocation_context import InvocationContext
-from google.adk.events import Event
+from google.adk.events import Event, EventActions
 from google.adk.models.google_llm import Gemini
 from google.genai import types
 from typing_extensions import override
@@ -331,7 +331,17 @@ class SolvabilityRouter(BaseAgent):
             except Exception:
                 verdict = {}
         solvable = bool(verdict.get("solvable"))
-        ctx.session.state["escalated"] = not solvable
+
+        # Persist via state_delta, NOT ctx.session.state[...] = ...
+        # Direct mutation is silently dropped by the session service: it looked
+        # like it worked in-process, but `escalated` came back None afterwards,
+        # so the dashboard reported escalated=false on claims that had in fact
+        # escalated -- contradicting their own case_summary.
+        yield Event(
+            author=self.name,
+            actions=EventActions(state_delta={"escalated": not solvable}),
+        )
+
         target = self.fixer if solvable else self.escalator
         async for event in target.run_async(ctx):
             yield event
