@@ -26,6 +26,7 @@ from google.adk.models.google_llm import Gemini
 from google.genai import types
 from typing_extensions import override
 
+from . import config  # noqa: F401  -- imported for side effect: loads .env before the model client builds
 from . import tools
 from .schemas import ClaimSummary, DetectedIssue, ResearchFinding, Verdict
 

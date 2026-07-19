@@ -1,4 +1,4 @@
-# deps -- never commit these; reinstall with `npm i`
+# deps -- never commit; reinstall with `npm i` / `pip install`
 node_modules/
 .vite/
 dist/
@@ -6,6 +6,11 @@ dist/
 # python
 __pycache__/
 *.pyc
+
+# secrets / local config -- never commit; use .env.example as the template
+.env
+**/.env
+!.env.example
 
 # macOS
 .DS_Store

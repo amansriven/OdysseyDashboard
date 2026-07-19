@@ -1,13 +1,13 @@
 """Phase 1 smoke test: exercise every tool against real rows."""
 
 import csv
-from pathlib import Path
 
 from odyssey import data, tools
 from odyssey.schemas import DashboardPayload
 
-raw = list(csv.DictReader(open(Path.home() / "data/structured/claims.csv")))
-roi_raw = list(csv.DictReader(open(Path.home() / "data/structured/roi_authorizations.csv")))
+_root = data._data_root() / "structured"
+raw = list(csv.DictReader(open(_root / "claims.csv")))
+roi_raw = list(csv.DictReader(open(_root / "roi_authorizations.csv")))
 
 denied = next(c for c in raw if c["claim_status"] == "Denied")
 pending = next(c for c in raw if c["claim_status"] in ("Pending", "In Review"))

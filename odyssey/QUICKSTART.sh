@@ -5,10 +5,20 @@
 #
 # Everything already lives in ~/odyssey and ~/adk_apps. Nothing to install.
 
-export GOOGLE_GENAI_USE_VERTEXAI=TRUE
-export GOOGLE_CLOUD_PROJECT=qwiklabs-gcp-03-73322a4eafa0
-export GOOGLE_CLOUD_LOCATION=us-central1
+# Load all config/secrets from the project-root .env -- nothing hardcoded here.
+# (Python also loads .env itself via odyssey/config.py; this makes the same
+#  values available to the interactive shell and to `adk web`.)
+if [ -f ~/.env ]; then
+  set -a; . ~/.env; set +a
+else
+  echo "  WARNING: no ~/.env found. Copy .env.example to ~/.env and fill it in."
+fi
 export PYTHONPATH=$HOME
+
+if [ -z "$GOOGLE_CLOUD_PROJECT" ] && [ -z "$GOOGLE_API_KEY" ]; then
+  echo "  WARNING: neither GOOGLE_CLOUD_PROJECT nor GOOGLE_API_KEY is set in ~/.env"
+fi
+echo "  data source: $([ -n "$MONGO_URI" ] && echo 'MongoDB' || echo 'training_data CSVs')"
 
 cat <<'BANNER'
 
