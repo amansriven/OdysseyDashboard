@@ -37,14 +37,28 @@ def roi_gate(callback_context: CallbackContext) -> Optional[types.Content]:
     policy the model is asked to respect.
     """
     state = callback_context.state
-    member_id = (state.get("member_id") or "").strip()
+    member_name = (state.get("member_name") or "").strip()
+    member_dob = (state.get("member_dob") or "").strip()
     caller_name = (state.get("caller_name") or "").strip()
 
-    if not member_id or not caller_name:
+    if not member_name or not member_dob or not caller_name:
         return types.Content(role="model", parts=[types.Part(
-            text="I need the member ID and your full name before I can look anything up."
+            text="I need the member's full name, date of birth, and your name before I can look anything up."
         )])
 
+    # First, find the member by name and DOB
+    member_lookup = tools.find_member_by_name_dob(member_name, member_dob)
+    if "error" in member_lookup:
+        state["roi_cleared"] = False
+        return types.Content(role="model", parts=[types.Part(
+            text=f"I couldn't find a member with name '{member_name}' and date of birth '{member_dob}'. "
+                 "Please verify the information is correct."
+        )])
+
+    member_id = member_lookup["member_id"]
+    state["member_id"] = member_id  # Store for agent to use
+
+    # Now check ROI for this member
     roi = tools.check_roi(member_id, caller_name)
     state["roi_check"] = roi
     status = roi["status"]
@@ -57,14 +71,14 @@ def roi_gate(callback_context: CallbackContext) -> Optional[types.Content]:
     state["roi_cleared"] = False
     if status == "EXPIRED":
         msg = (
-            f"I'm not able to share {member_id}'s information with you. "
+            f"I'm not able to share {member_name}'s information with you. "
             f"{roi.get('reason', '')} "
             "A renewed Release of Information form is needed first. I can send the form, "
             "or the member can call us directly and act on their own behalf."
         )
     else:
         msg = (
-            f"I'm not able to share {member_id}'s information with you. "
+            f"I'm not able to share {member_name}'s information with you. "
             "For the protection of our members, I need a Release of Information "
             "authorisation on file for you, and I'm not showing one. "
             "Verbal consent isn't sufficient under our compliance guidelines, even if "

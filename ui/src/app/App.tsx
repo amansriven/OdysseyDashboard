@@ -1,9 +1,9 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   CheckCircle2, Clock, AlertTriangle, XCircle, ChevronRight, FileText, User, Stethoscope, Shield,
   Search, ArrowRight, Phone, Activity, TrendingUp, AlertCircle, LogOut,
   Accessibility, BellRing, BellOff, X, Type, DollarSign, Calendar, Info, ArrowUpRight,
-  Eye, Building2, Pill, Zap, Target, Briefcase, ChevronDown, Filter
+  Eye, Building2, Pill, Zap, Target, Briefcase, ChevronDown, Filter, RefreshCw
 } from "lucide-react";
 import dashboardData from "../data/claims.json";
 import ChatBot from "./components/ChatBot";
@@ -12,13 +12,159 @@ type View = "member" | "representative";
 type TextSize = "normal" | "large" | "xl";
 type Tab = "overview" | "claims" | "issues";
 
-const MEMBER = dashboardData.member;
-
-const CLAIMS: any[] = dashboardData.claims;
-
+// Default data from static file
+const DEFAULT_MEMBER = dashboardData.member;
+const DEFAULT_CLAIMS: any[] = dashboardData.claims;
 const BENEFITS: any = dashboardData.benefits;
 
 const money = (n: number | null) => n == null ? "—" : `$${n.toLocaleString()}`;
+
+// ROI Gate Panel Component
+function ROIGatePanel({ onROICleared }: { onROICleared: (memberName: string, memberId: string) => void }) {
+  const [callerName, setCallerName] = useState("");
+  const [memberName, setMemberName] = useState("");
+  const [memberDob, setMemberDob] = useState("");
+  const [isChecking, setIsChecking] = useState(false);
+  const [result, setResult] = useState<{status: string, message: string} | null>(null);
+
+  const checkROI = async () => {
+    if (!callerName.trim() || !memberName.trim() || !memberDob.trim()) {
+      setResult({status: "error", message: "Please enter caller name, member name, and date of birth"});
+      return;
+    }
+
+    setIsChecking(true);
+    setResult(null);
+
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          agent_type: "call_assist",
+          message: `Verify authorization for caller ${callerName} to access member ${memberName}`,
+          initial_state: {
+            member_name: memberName,
+            member_dob: memberDob,
+            caller_name: callerName
+          }
+        }),
+      });
+
+      const data = await response.json();
+
+      // Check if ROI was cleared
+      const roiCleared = data.state?.roi_cleared;
+
+      if (roiCleared) {
+        setResult({
+          status: "success",
+          message: `✓ Authorization verified. ${callerName} is authorized to access ${memberName}'s information.`
+        });
+        // Call parent to unlock claims view
+        const memberId = data.state?.member_id || "";
+        onROICleared(memberName, memberId);
+      } else {
+        setResult({
+          status: "blocked",
+          message: data.response || "Authorization denied. No ROI on file."
+        });
+      }
+    } catch (error) {
+      setResult({
+        status: "error",
+        message: `Error: ${error instanceof Error ? error.message : "Failed to verify ROI"}`
+      });
+    } finally {
+      setIsChecking(false);
+    }
+  };
+
+  const handleKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") {
+      checkROI();
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div>
+          <label className="block text-xs font-bold text-slate-700 mb-1.5">Caller Name</label>
+          <input
+            type="text"
+            value={callerName}
+            onChange={(e) => setCallerName(e.target.value)}
+            onKeyPress={handleKeyPress}
+            placeholder="e.g., David, Douglas Wilson"
+            className="w-full px-4 py-2.5 bg-white border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-bold text-slate-700 mb-1.5">Member Full Name</label>
+          <input
+            type="text"
+            value={memberName}
+            onChange={(e) => setMemberName(e.target.value)}
+            onKeyPress={handleKeyPress}
+            placeholder="e.g., Patricia Davis"
+            className="w-full px-4 py-2.5 bg-white border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-bold text-slate-700 mb-1.5">Member Date of Birth</label>
+          <input
+            type="text"
+            value={memberDob}
+            onChange={(e) => setMemberDob(e.target.value)}
+            onKeyPress={handleKeyPress}
+            placeholder="YYYY-MM-DD or MM/DD/YYYY"
+            className="w-full px-4 py-2.5 bg-white border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+          />
+        </div>
+      </div>
+
+      <button
+        onClick={checkROI}
+        disabled={isChecking}
+        className="w-full md:w-auto px-6 py-2.5 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+      >
+        {isChecking ? (
+          <>
+            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+            Verifying...
+          </>
+        ) : (
+          <>
+            <Shield className="w-4 h-4" />
+            Verify ROI Authorization
+          </>
+        )}
+      </button>
+
+      {result && (
+        <div className={`p-4 rounded-lg border-2 ${
+          result.status === "success"
+            ? "bg-emerald-50 border-emerald-300 text-emerald-800"
+            : result.status === "blocked"
+            ? "bg-rose-50 border-rose-300 text-rose-800"
+            : "bg-amber-50 border-amber-300 text-amber-800"
+        }`}>
+          <p className="text-sm font-medium whitespace-pre-wrap">{result.message}</p>
+        </div>
+      )}
+
+      <div className="mt-3 p-3 bg-blue-50 rounded-lg border border-blue-200">
+        <p className="text-xs font-semibold text-blue-900 mb-1">Test Scenarios (transcript_04):</p>
+        <ul className="text-xs text-blue-800 space-y-0.5">
+          <li>• <strong>Blocked:</strong> Caller "David", Member "Kelly Foster", DOB "1977-01-07"</li>
+          <li>• <strong>Authorized:</strong> Caller "Douglas Wilson", Member "Kelly Foster", DOB "1977-01-07"</li>
+          <li>• <strong>Self:</strong> Caller "John Rodriguez", Member "John Rodriguez", DOB "1954-10-02"</li>
+        </ul>
+      </div>
+    </div>
+  );
+}
 
 export default function App() {
   const [view, setView] = useState<View>("member");
@@ -30,16 +176,114 @@ export default function App() {
   const [notifications, setNotifications] = useState(true);
   const [showA11y, setShowA11y] = useState(false);
 
+  // ROI Gate state for Representative view
+  const [roiVerified, setRoiVerified] = useState(false);
+  const [authorizedMemberName, setAuthorizedMemberName] = useState("");
+  const [authorizedMemberId, setAuthorizedMemberId] = useState("");
+
+  // Dashboard data state
+  const [MEMBER, setMember] = useState(DEFAULT_MEMBER);
+  const [CLAIMS, setClaims] = useState(DEFAULT_CLAIMS);
+  const [isLoadingDashboard, setIsLoadingDashboard] = useState(false);
+  const [dataSource, setDataSource] = useState<"static" | "api">("static");
+
+  // Fetch dashboard data from API (optional, defaults to static)
+  const loadDashboardData = async (useLive: boolean = false) => {
+    setIsLoadingDashboard(true);
+    try {
+      const response = await fetch(`/api/dashboard/${DEFAULT_MEMBER.id}?live=${useLive}`);
+      const data = await response.json();
+
+      if (data.error) {
+        console.error("Dashboard API error:", data.error);
+        // Fall back to static data
+        setMember(DEFAULT_MEMBER);
+        setClaims(DEFAULT_CLAIMS);
+        setDataSource("static");
+      } else {
+        setMember(data.member);
+        setClaims(data.claims);
+        setDataSource("api");
+      }
+    } catch (error) {
+      console.error("Failed to load dashboard data:", error);
+      // Fall back to static data
+      setMember(DEFAULT_MEMBER);
+      setClaims(DEFAULT_CLAIMS);
+      setDataSource("static");
+    } finally {
+      setIsLoadingDashboard(false);
+    }
+  };
+
+  // Handle ROI verification success - fetch that member's claims LIVE from database
+  const handleROICleared = async (memberName: string, memberId: string) => {
+    setRoiVerified(true);
+    setAuthorizedMemberName(memberName);
+    setAuthorizedMemberId(memberId);
+
+    // Fetch claims for THIS specific member from the database (LIVE agents)
+    setIsLoadingDashboard(true);
+    try {
+      // Use live=true to run agents and get real data from database
+      const response = await fetch(`/api/dashboard/${memberId}?live=true`);
+      const data = await response.json();
+
+      if (data.error) {
+        console.error("Failed to fetch member claims:", data.error);
+        alert(`Could not fetch claims for ${memberName}: ${data.error}`);
+      } else {
+        console.log("API Response:", data);
+        console.log("Claims received:", data.claims?.length || 0);
+
+        // Update to show this member's claims
+        if (data.member) {
+          setMember(data.member);
+        }
+        setClaims(data.claims || []);
+        setDataSource("api");
+
+        console.log("CLAIMS state updated to:", data.claims);
+      }
+    } catch (error) {
+      console.error("Error fetching member claims:", error);
+      alert(`Error fetching claims: ${error}`);
+    } finally {
+      setIsLoadingDashboard(false);
+    }
+  };
+
+  // Reset ROI when switching views
+  useEffect(() => {
+    if (view === "member") {
+      // Member view doesn't need ROI
+      setRoiVerified(false);
+      setAuthorizedMemberName("");
+      setAuthorizedMemberId("");
+    }
+  }, [view]);
+
+  // Load on mount (precomputed data by default)
+  useEffect(() => {
+    // Uncomment to load from API on mount:
+    // loadDashboardData(false);
+  }, []);
+
   const textSizeClass = textSize === "xl" ? "text-lg" : textSize === "large" ? "text-base" : "text-sm";
   const headingSizeClass = textSize === "xl" ? "text-3xl" : textSize === "large" ? "text-2xl" : "text-xl";
 
   const myClaims = CLAIMS.filter(c => c.member === MEMBER.name);
-  const issuesCount = (view === "member" ? myClaims : CLAIMS).filter(c => c.issue).length;
+
+  // For representative view: show ALL claims when ROI verified (already filtered by API)
+  const repClaims = roiVerified ? CLAIMS : [];
+
+  const displayClaims = view === "member" ? myClaims : repClaims;
+
+  const issuesCount = displayClaims.filter(c => c.issue).length;
   const inReviewCount = myClaims.filter(c => c.status === "inprogress" || c.status === "pending").length;
   const completedCount = myClaims.filter(c => c.status === "completed").length;
   const totalOwed = myClaims.reduce((sum, c) => sum + (c.youOwe || 0), 0);
 
-  const displayClaims = view === "member" ? myClaims : CLAIMS;
   const claimsWithIssues = displayClaims.filter(c => c.issue);
 
   const getStatusColor = (status: string) => {
@@ -88,6 +332,23 @@ export default function App() {
 
             {/* Header Actions */}
             <div className="flex items-center gap-3">
+              {/* Dashboard Data Source Indicator */}
+              {dataSource === "api" && (
+                <div className="px-3 py-1.5 bg-emerald-50 border border-emerald-200 rounded-lg">
+                  <p className="text-xs font-bold text-emerald-700">Live AI Data</p>
+                </div>
+              )}
+
+              {/* Refresh Dashboard Button */}
+              <button
+                onClick={() => loadDashboardData(false)}
+                disabled={isLoadingDashboard}
+                className="p-2.5 rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200 transition-all disabled:opacity-50"
+                title="Refresh Dashboard (Precomputed)"
+              >
+                <RefreshCw className={`w-5 h-5 ${isLoadingDashboard ? "animate-spin" : ""}`} />
+              </button>
+
               <button
                 onClick={() => setNotifications(!notifications)}
                 className={`p-2.5 rounded-lg transition-all ${notifications ? "bg-emerald-50 text-emerald-600" : "bg-slate-100 text-slate-500"}`}
@@ -398,26 +659,71 @@ export default function App() {
             <>
               <h2 className={`${headingSizeClass} font-bold text-slate-900 mb-6`}>Claims Work Queue</h2>
 
-              {/* Search */}
-              <div className="bg-white rounded-xl border border-slate-200 p-5 mb-6">
-                <h3 className="text-base font-bold text-slate-900 mb-4">Member Search</h3>
-                <div className="flex gap-3">
-                  <div className="relative flex-1">
-                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-                    <input
-                      type="text"
-                      placeholder="Search by Member ID, Name, or DOB..."
-                      className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                    />
+              {/* ROI Gate - Call Assist */}
+              <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl border-2 border-blue-200 p-5 mb-6">
+                <div className="flex items-start gap-3 mb-4">
+                  <Shield className="w-6 h-6 text-blue-600 flex-shrink-0 mt-1" />
+                  <div>
+                    <h3 className="text-base font-bold text-slate-900">Call Assist - ROI Verification</h3>
+                    <p className="text-sm text-slate-600 mt-1">
+                      Verify Release of Information before accessing member data (Use Case 3)
+                    </p>
                   </div>
-                  <button className="px-6 py-3 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 transition-colors shadow-sm">
-                    Search
-                  </button>
                 </div>
+                <ROIGatePanel onROICleared={handleROICleared} />
               </div>
 
-              {/* Claims Table */}
-              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+              {/* ROI Status Banner */}
+              {roiVerified && (
+                <div className="bg-emerald-50 border-2 border-emerald-300 rounded-xl p-4 mb-6">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <Shield className="w-6 h-6 text-emerald-600" />
+                      <div>
+                        <p className="text-sm font-bold text-emerald-900">
+                          Authorization Verified ✓
+                        </p>
+                        <p className="text-xs text-emerald-700 mt-0.5">
+                          Viewing claims for: <strong>{authorizedMemberName}</strong> (Member ID: {authorizedMemberId})
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setRoiVerified(false);
+                        setAuthorizedMemberName("");
+                        setAuthorizedMemberId("");
+                      }}
+                      className="px-4 py-2 bg-white border border-emerald-300 text-emerald-700 rounded-lg text-xs font-bold hover:bg-emerald-100 transition-colors"
+                    >
+                      Clear Authorization
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Search */}
+              {roiVerified && (
+                <>
+                  <div className="bg-white rounded-xl border border-slate-200 p-5 mb-6">
+                    <h3 className="text-base font-bold text-slate-900 mb-4">Member Search</h3>
+                    <div className="flex gap-3">
+                      <div className="relative flex-1">
+                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                        <input
+                          type="text"
+                          placeholder="Search by Member ID, Name, or DOB..."
+                          className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                        />
+                      </div>
+                      <button className="px-6 py-3 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 transition-colors shadow-sm">
+                        Search
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Claims Table */}
+                  <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
                 <div className="p-4 border-b border-slate-200 flex items-center justify-between">
                   <div className="flex items-center gap-4">
                     <h3 className="text-sm font-bold text-slate-900">All Claims</h3>
@@ -478,6 +784,40 @@ export default function App() {
                   </table>
                 </div>
               </div>
+                </>
+              )}
+
+              {/* Loading State */}
+              {roiVerified && isLoadingDashboard && (
+                <div className="bg-blue-50 rounded-xl border-2 border-blue-200 p-12 text-center">
+                  <RefreshCw className="w-16 h-16 text-blue-600 mx-auto mb-4 animate-spin" />
+                  <h3 className="text-xl font-bold text-blue-900 mb-2">
+                    Loading Claims...
+                  </h3>
+                  <p className="text-sm text-blue-700 max-w-md mx-auto">
+                    Running AI agents to analyze {authorizedMemberName}'s claims from the database.
+                  </p>
+                  <p className="text-xs text-blue-600 mt-4">
+                    This may take 30-60 seconds per claim...
+                  </p>
+                </div>
+              )}
+
+              {/* Blocked State - Show when ROI not verified */}
+              {!roiVerified && !isLoadingDashboard && (
+                <div className="bg-slate-50 rounded-xl border-2 border-slate-200 p-12 text-center">
+                  <Shield className="w-16 h-16 text-slate-400 mx-auto mb-4" />
+                  <h3 className="text-xl font-bold text-slate-900 mb-2">
+                    Authorization Required
+                  </h3>
+                  <p className="text-sm text-slate-600 max-w-md mx-auto">
+                    To view member claims and protected health information, please verify authorization using the ROI gate above.
+                  </p>
+                  <p className="text-xs text-slate-500 mt-4">
+                    This ensures HIPAA compliance by preventing unauthorized access to PHI.
+                  </p>
+                </div>
+              )}
             </>
           )}
         </div>

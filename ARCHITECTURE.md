@@ -362,6 +362,331 @@ Secondary: replay the 12 call transcripts as end-to-end scenarios — each maps 
 
 ---
 
+## Codebase Structure
+
+### Directory Layout
+
+```
+OdysseyDashboard/
+├── odyssey/                     # Python backend — ADK agents and tools (2,193 LOC)
+│   ├── agents.py               # 414 LOC — 9 agents: claim spine (5 stages) + satellites
+│   ├── orchestrator.py         # 203 LOC — routes user queries to specialist agents
+│   ├── api_server.py           # 204 LOC — Flask API serving chatbot requests
+│   ├── call_path.py            #  95 LOC — ROI gate + Call Assist entry point
+│   ├── tools.py                # 468 LOC — deterministic data access layer (no LLM)
+│   ├── schemas.py              #  89 LOC — Pydantic contracts (DashboardPayload + state)
+│   ├── data.py                 #  88 LOC — CSV loader with type coercion
+│   ├── run.py                  #  89 LOC — CLI runner: claim spine end-to-end
+│   ├── precompute.py           # 183 LOC — generates ui/src/data/claims.json
+│   ├── verify_all.py           #  54 LOC — smoke tests for 3 agents
+│   ├── smoke_test.py           #  85 LOC — basic connectivity test
+│   ├── perf_probe.py           #  69 LOC — latency measurement
+│   ├── quota_probe.py          #  53 LOC — Vertex quota testing
+│   ├── test_workflow.py        # 103 LOC — workflow experiment (unused)
+│   └── QUICKSTART.sh           #  env vars setup script
+│
+├── ui/                         # React + Vite frontend (910 LOC custom code)
+│   ├── src/
+│   │   ├── app/
+│   │   │   ├── App.tsx         # 689 LOC — main dashboard UI
+│   │   │   └── components/
+│   │   │       ├── ChatBot.tsx # 221 LOC — AI chatbot with session memory
+│   │   │       └── ui/         # shadcn/ui components (Radix + Tailwind)
+│   │   ├── data/
+│   │   │   └── claims.json     # Precomputed agent output (static for now)
+│   │   └── main.tsx            # React entrypoint
+│   ├── vite.config.ts          # Proxy /api → localhost:5000
+│   └── package.json            # React, Radix UI, Lucide icons, Tailwind
+│
+├── data/                       # Dataset (structured + unstructured)
+│   ├── structured/             # 6 in-scope CSV tables (Prompt 1)
+│   │   ├── claims.csv          # 880 rows — core claim records
+│   │   ├── members.csv         # 200 rows — demographics + plan type
+│   │   ├── roi_authorizations.csv  # 352 rows — ROI on file/expired status
+│   │   ├── coverage_rules.csv  # 80 rows — plan + CPT → coverage/prior-auth
+│   │   ├── compliance_flags.csv  # 312 rows — operational + compliance risk
+│   │   └── providers.csv       # 50 rows — provider directory
+│   └── unstructured/
+│       └── call_transcripts/   # 12 txt files — demo scenarios
+│
+├── adk_apps/                   # Early standalone ADK apps (superseded)
+│   ├── odyssey_claim/agent.py  # Prototype — now integrated into agents.py
+│   ├── odyssey_benefits/agent.py
+│   └── odyssey_compliance/agent.py
+│
+├── requirements.txt            # google-adk, genai, pandas, flask, flask-cors
+├── sync_to_cloudshell.sh       # Cloud Shell deployment script
+├── ARCHITECTURE.md             # This file
+├── CLOUDSHELL_SETUP.md         # Deployment + runtime instructions
+├── ORCHESTRATOR_SETUP.md       # Orchestrator agent design notes
+└── CONVERSATION_MEMORY_UPDATE.md  # Session memory implementation notes
+```
+
+---
+
+### Python Backend Architecture (`odyssey/`)
+
+#### **Core Agent Pipeline (`agents.py` — 414 LOC)**
+
+The claim spine is a **SequentialAgent** with 5 stages:
+
+1. **Claim-Summarizer** (`LlmAgent`)
+   - Tools: `get_claim`, `get_member`
+   - Output: `ClaimSummary` → state["claim_summary"]
+   - Job: Plain-language "what happened" for a member
+
+2. **Issue-Detector** (`LlmAgent`)
+   - Tools: `predict_denial_risk`, `get_claim`
+   - Output: `DetectedIssue` → state["issue"]
+   - Job: Classify known denials OR predict issues on pre-adjudication claims (203 Pending/In-Review)
+   - **Key insight:** `prior_auth_required AND NOT prior_auth_obtained` → preventable denial
+
+3. **Researchers** (`SequentialAgent` — deliberately NOT parallel to avoid 429s)
+   - **Researcher1** (claim/coverage lens): `get_claim`, `get_member`, `get_coverage_rule`
+   - **Researcher2** (auth/risk lens): `get_claim`, `get_compliance_flags`
+   - Both output: `ResearchFinding` → state["finding_claim"], state["finding_auth"]
+   - **Conflict resolution:** When plan-level rule disagrees with claim-level flag, claim wins
+
+4. **Mediator** (`LlmAgent`)
+   - Tools: `get_remedy`
+   - Input: state["issue"], state["finding_claim"], state["finding_auth"]
+   - Output: `Verdict` → state["verdict"]
+   - Job: Reconcile lenses, apply precedence (ROI > prior-auth > coverage > coding), set `solvable`
+
+5. **Solvability-Router** (`BaseAgent` subclass — NOT an LLM)
+   - Reads: state["verdict"].solvable
+   - Dispatches to:
+     - **Error-Fixer** (`LlmAgent`) → state["resolution"] (member/provider instructions)
+     - **Escalation-Flag** (`LlmAgent`) → state["case_summary"] (rep-ready summary)
+
+**Why sequential researchers?** Original design used `ParallelAgent`, but 2 researchers × 3 tool calls each = 6 concurrent requests → 429s. Sequential adds ~5s latency but ensures demo reliability.
+
+#### **Satellite Agents (independent entry points)**
+
+- **Benefits-Navigator** (`LlmAgent`)
+  - Tools: `get_coverage_rule`, `get_member`
+  - Output: state["benefits_answer"]
+  - Job: Prospective coverage questions (no claim) with `rule_id` citation
+
+- **Compliance-Sentinel** (`LlmAgent`)
+  - Tools: `get_compliance_flags`
+  - Output: state["ops_feed"]
+  - Job: Triage 312 unresolved flags (70 ROI gaps, 191 stalled claims, etc.)
+
+#### **Orchestrator (`orchestrator.py` — 203 LOC)**
+
+**Design:** Single `LlmAgent` with 7 tools:
+- 4 direct tools: `get_claims_by_member`, `get_plan_benefits_summary`, `check_roi`, `get_roi_summary`
+- 3 specialist-calling tools: `check_claim()`, `check_benefits()`, `check_compliance()` (each spawns a sub-runner)
+
+**Job:** Parse user intent → route to the right specialist → return response naturally.
+
+**Conversation memory:** Tracks member_id/plan_type across turns, so follow-up questions don't require re-stating context.
+
+#### **Call Path (`call_path.py` — 95 LOC)**
+
+**ROI Gate** (`before_agent_callback`):
+- Runs BEFORE any agent logic
+- Checks: `tools.check_roi(member_id, caller_name)`
+- Returns: `Content` (short-circuits agent) OR `None` (proceeds)
+- **Use case 3:** transcript_04_roi_missing.txt — son calls for 78-year-old mother, blocked pre-data-access
+
+**Call Assist** (`LlmAgent`):
+- Only runs if ROI gate passes
+- Tools: `get_claim`, `get_roi_summary`, `get_compliance_flags`
+- Job: Representative-facing call assist
+
+#### **Tools Layer (`tools.py` — 468 LOC)**
+
+**Design principle:** Every function is a lookup or deterministic arithmetic. No LLM calls, no generation.
+
+**Key functions:**
+- `get_claim(claim_id)` → full claim record + computed fields (days_since_service, filing_lag_days)
+- `get_coverage_rule(plan_type, cpt_code)` → coverage + prior-auth + cost-share lookup
+- `get_remedy(denial_code)` → REMEDIES dict (10 CARC codes → owner + next_step)
+- `predict_denial_risk(claim_id)` → pre_adjudication flag + signals dict (prior_auth_gap, etc.)
+- `compute_call_risk_score(claim_id)` → 0-100 weighted heuristic (denial_fixable + ROI expired + flags)
+- `check_roi(member_id, caller_name)` → SELF | ON_FILE | EXPIRED | NOT_ON_FILE
+- `get_compliance_flags(entity_id, flag_type, severity)` → filtered compliance rows
+
+**REMEDIES dict** (lines 26-79): Ground truth for solvability routing. denial_fixable is a pure function of denial_code (10 codes, 156 True / 56 False on 212 denied claims).
+
+#### **Data Layer (`data.py` — 88 LOC)**
+
+**CSV loader with type coercion:**
+- Boolean columns: `"True"/"False"` strings → Python bool
+- Date columns: strings → `pd.Timestamp`
+- Cached via `@lru_cache(maxsize=1)`
+
+**In-scope tables:** claims, members, roi_authorizations, coverage_rules, compliance_flags, providers (keyed by claim_id/member_id/auth_id/rule_id/flag_id).
+
+**Out-of-scope:** measure_id-keyed tables (care_gaps, stars_*, etc.) belong to a different hackathon prompt.
+
+#### **Schemas (`schemas.py` — 89 LOC)**
+
+**Team contract:** `DashboardPayload` (7 fields)
+- `claim_status`: raw data (never generated)
+- `issue_identified`: from Mediator
+- `owner`: Member | Provider | Plan | None
+- `next_step`: Error-Fixer or "Referred to representative"
+- `estimated_resolution`: deterministic from `reprocessing_days_est`
+- `roi_status`: from `get_roi_summary()` (NOT check_roi — dashboard is member self-service, no caller)
+- `call_risk_score`: deterministic heuristic (0-100)
+- `escalated`: bool (set by Solvability-Router)
+- `case_summary`: rep-facing text when escalated
+
+**Agent state objects:** `ClaimSummary`, `DetectedIssue`, `ResearchFinding`, `Verdict` (passed via ADK output_key).
+
+#### **API Server (`api_server.py` — 204 LOC)**
+
+**Flask + CORS** serving `/api/chat` and `/api/health`.
+
+**Architecture:**
+- Persistent event loop (avoids "Event loop is closed" errors with ADK cleanup)
+- Session storage: `{session_id: {agent_type, runner, session}}` for conversation memory
+- Single orchestrator agent (routes internally)
+- Preprocessing layer: handles greetings without calling agents
+
+**Request flow:**
+1. UI POST → `/api/chat` with `{message, session_id?}`
+2. Preprocess: greetings return canned response
+3. Orchestrator routes to specialist (claim_spine / benefits_navigator / compliance_sentinel)
+4. Return `{response, structured_output, state, session_id}`
+
+#### **Runners & Utilities**
+
+- `run.py` (89 LOC): CLI runner for one claim end-to-end, outputs `DashboardPayload` JSON
+- `precompute.py` (183 LOC): Batch-generates `ui/src/data/claims.json` for demo cohort
+  - Why: One claim = ~75s through pipeline; precompute avoids live latency/quota issues during demo
+  - Runs agents only on claims with issues (`needs_agents()` filter)
+- `verify_all.py` (54 LOC): Smoke tests for benefits/compliance agents
+- `smoke_test.py` (85 LOC): Basic Vertex AI connectivity test
+- `perf_probe.py` (69 LOC): Latency measurement across stages
+- `quota_probe.py` (53 LOC): Vertex quota limit testing (discovered 429s at ~4 concurrent)
+
+---
+
+### React Frontend (`ui/` — 910 LOC custom code)
+
+#### **Main App (`App.tsx` — 689 LOC)**
+
+**Two views:**
+- **Member view:** My claims, benefits, accessibility features
+- **Representative view:** All claims, escalated cases, compliance feed
+
+**Features:**
+- Claim list with status badges (Completed / In Progress / Pending / Denied)
+- Issue highlighting with owner/next-step/resolution timeline
+- Accessibility controls: text size (Normal/Large/XL), high contrast, simplified mode
+- Notifications toggle
+
+**Data source (current):** Static JSON from `ui/src/data/claims.json` (precomputed agent output)
+
+**Missing connection:** Dashboard doesn't yet fetch live data from `/api` — chatbot does, dashboard doesn't.
+
+#### **ChatBot (`ChatBot.tsx` — 221 LOC)**
+
+**Features:**
+- Floating chat button (bottom-right)
+- Session-based conversation memory (session_id persisted across turns)
+- Agent type: "orchestrator" (routes automatically)
+- Loading states, error handling
+- Clear chat button
+
+**Request format:**
+```json
+POST /api/chat
+{
+  "agent_type": "orchestrator",
+  "message": "What does claim CLM000377 entail?",
+  "session_id": "uuid-here"  // optional, auto-generated if missing
+}
+```
+
+**Response:**
+```json
+{
+  "response": "Plain-language answer...",
+  "structured_output": {...},
+  "state": {...},
+  "session_id": "uuid-here"
+}
+```
+
+#### **Vite Config (`vite.config.ts`)**
+
+**Proxy setup:** `/api/*` → `http://localhost:5000` (Flask backend)
+
+**Cloud Shell compatibility:** `allowedHosts: true` (dev server accessible through Google's authenticated proxy)
+
+**Port:** 5173 (or 8080 via `--port 8080` in npm script)
+
+---
+
+### Data (`data/`)
+
+#### **Structured (6 CSV tables, in-scope for Prompt 1)**
+
+| File | Rows | Key | Purpose |
+|---|---|---|---|
+| `claims.csv` | 880 | claim_id | Claim status, denial codes, prior-auth flags, adjudication dates |
+| `members.csv` | 200 | member_id | Demographics, plan_type (HMO/PPO/DSNP/MAPD) |
+| `roi_authorizations.csv` | 352 | auth_id | Release of Information: who can call, on-file/expired status |
+| `coverage_rules.csv` | 80 | rule_id | plan_type + cpt_code → covered, prior_auth_required, copay |
+| `compliance_flags.csv` | 312 | flag_id | 5 types: ROI_AUTHORIZATION_GAP (70), CLAIM_REVIEW_STALLED (191), etc. |
+| `providers.csv` | 50 | provider_id | Provider directory, network status |
+
+**Distributions (from ARCHITECTURE.md "Data Foundation"):**
+- Claims: 465 Paid · 212 Denied · 116 Pending · 87 In Review
+- denial_fixable: 156 True / 56 False (ground truth for Solvability-Router evaluation)
+- ROI: 293 on file / 59 missing / **43 expired** (subtle case Mediator must catch)
+- Prior-auth required: 243 claims · modifier_mismatch: 18 claims
+
+#### **Unstructured**
+
+- `call_transcripts/` (12 files): Real-world scenarios for testing
+  - transcript_04_roi_missing.txt: Son calling for mother, blocked by ROI gate
+  - transcript_01_denied_claim_inquiry.txt: CO-109 denial, fixable
+  - transcript_05_benefits_question.txt: CPT prior-auth lookup
+  - 2 care_gap transcripts (out-of-scope)
+
+---
+
+### Deployment (`sync_to_cloudshell.sh`)
+
+**Script automates:**
+1. Clone or pull latest from GitHub
+2. Install Python deps: `pip install --user flask flask-cors`
+3. Install UI deps: `npm install` (if node_modules missing)
+4. Print run instructions (2 terminals: API + UI)
+
+**Runtime:**
+- Terminal 1: `source ~/odyssey/QUICKSTART.sh && python3 -m odyssey.api_server`
+- Terminal 2: `cd ui && npm run dev -- --port 8080`
+- Access: Web Preview → Port 8080
+
+---
+
+### Code Metrics
+
+| Component | Files | LOC | Purpose |
+|---|---|---|---|
+| **Python backend** | 15 .py | 2,193 | ADK agents, tools, API server |
+| **React frontend (custom)** | 2 .tsx | 910 | Dashboard + ChatBot |
+| **UI components** | 40+ .tsx | ~3,000 | shadcn/ui (Radix + Tailwind) |
+| **Data** | 6 .csv | 2,674 rows | In-scope Prompt 1 tables |
+| **Documentation** | 4 .md | — | Architecture, setup, notes |
+
+**Key files by function:**
+- Agent logic: `agents.py` (414), `orchestrator.py` (203), `call_path.py` (95)
+- Data layer: `tools.py` (468), `data.py` (88)
+- API: `api_server.py` (204)
+- UI: `App.tsx` (689), `ChatBot.tsx` (221)
+- Schemas: `schemas.py` (89)
+- Runners: `run.py` (89), `precompute.py` (183), `verify_all.py` (54)
+
+---
+
 ## Cuts From the Original Design, and Why
 
 | Agent | Disposition | Rationale |

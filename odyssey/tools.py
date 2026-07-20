@@ -135,6 +135,103 @@ def get_member(member_id: str) -> dict:
                                 "plan_type", "plan_id", "language_preference") if k in rec}
 
 
+def get_claims_by_member(member_id: str) -> dict:
+    """Get all claims for a specific member.
+
+    Args:
+        member_id: The member ID (format: MBR00000)
+
+    Returns:
+        Dict with member info and list of their claims with basic details
+    """
+    # Verify member exists
+    rec = data.row("members", "member_id", member_id)
+    if rec is None:
+        return {"error": f"No member {member_id}"}
+
+    member = _clean(rec)
+
+    # Get all claims for this member
+    df = data.table("claims")
+    member_claims = df[df["member_id"] == member_id].to_dict("records")
+
+    if not member_claims:
+        return {
+            "member_id": member_id,
+            "member_name": f"{member.get('first_name', '')} {member.get('last_name', '')}",
+            "claims": [],
+            "message": "No claims found for this member."
+        }
+
+    # Format claims with key information
+    formatted_claims = []
+    for claim in member_claims:
+        claim = _clean(claim)
+        formatted_claims.append({
+            "claim_id": claim["claim_id"],
+            "claim_status": claim["claim_status"],
+            "service_date": claim.get("service_date", ""),
+            "cpt_code": claim.get("cpt_code", ""),
+            "cpt_description": claim.get("cpt_description", ""),
+            "provider_name": claim.get("provider_name", ""),
+            "billed_amount": claim.get("billed_amount", 0),
+            "denial_reason": claim.get("denial_reason", "") if claim.get("claim_status") == "Denied" else None,
+        })
+
+    return {
+        "member_id": member_id,
+        "member_name": f"{member.get('first_name', '')} {member.get('last_name', '')}",
+        "plan_type": member.get("plan_type", ""),
+        "total_claims": len(formatted_claims),
+        "claims": formatted_claims
+    }
+
+
+def get_plan_benefits_summary(plan_type: str) -> dict:
+    """Get a summary of benefits available under a specific plan type.
+
+    Args:
+        plan_type: The plan type (HMO, MAPD, DSNP, Commercial)
+
+    Returns:
+        Summary of common benefits, prior auth requirements, and cost sharing
+    """
+    df = data.table("coverage_rules")
+    plan_rules = df[df["plan_type"] == plan_type].to_dict("records")
+
+    if not plan_rules:
+        return {"error": f"No coverage rules found for plan type {plan_type}"}
+
+    # Clean records
+    plan_rules = [_clean(rule) for rule in plan_rules]
+
+    # Summarize key information
+    total_services = len(plan_rules)
+    covered_services = sum(1 for r in plan_rules if r.get("covered"))
+    prior_auth_required = sum(1 for r in plan_rules if r.get("prior_auth_required"))
+
+    # Group by common categories (sample of services)
+    common_services = []
+    for rule in plan_rules[:10]:  # Show first 10 as examples
+        common_services.append({
+            "cpt_code": rule.get("cpt_code", ""),
+            "cpt_description": rule.get("cpt_description", ""),
+            "covered": rule.get("covered", False),
+            "prior_auth_required": rule.get("prior_auth_required", False),
+            "cost_share_pct": rule.get("cost_share_pct", 0),
+            "copay": rule.get("copay", 0),
+        })
+
+    return {
+        "plan_type": plan_type,
+        "total_covered_services": covered_services,
+        "total_services_in_rulebook": total_services,
+        "services_requiring_prior_auth": prior_auth_required,
+        "sample_services": common_services,
+        "message": f"The {plan_type} plan covers {covered_services} services. {prior_auth_required} services require prior authorization."
+    }
+
+
 def get_coverage_rule(plan_type: str, cpt_code: str) -> dict:
     """Benefits rulebook lookup: is this CPT covered under this plan, does it need
     prior auth, and what does it cost?
@@ -148,6 +245,54 @@ def get_coverage_rule(plan_type: str, cpt_code: str) -> dict:
     if hit.empty:
         return {"error": f"No rule for plan={plan_type} cpt={cpt_code}"}
     return _clean(hit.iloc[0].to_dict())
+
+
+def find_member_by_name_dob(member_name: str, dob: str) -> dict:
+    """Find a member by their full name and date of birth.
+
+    This is more natural for callers than asking for a member ID.
+    Returns member_id if found, or error if not found / ambiguous.
+    """
+    from datetime import datetime
+
+    df = data.table("members")
+
+    # Parse the DOB (accept various formats)
+    try:
+        # Try parsing common formats
+        for fmt in ["%Y-%m-%d", "%m/%d/%Y", "%m-%d-%Y", "%Y/%m/%d"]:
+            try:
+                dob_date = datetime.strptime(dob.strip(), fmt).date()
+                break
+            except ValueError:
+                continue
+        else:
+            return {"error": f"Could not parse date '{dob}'. Use format YYYY-MM-DD or MM/DD/YYYY"}
+
+        dob_str = dob_date.isoformat()
+    except Exception as e:
+        return {"error": f"Invalid date format: {dob}"}
+
+    # Match by name (case-insensitive) and DOB
+    name_lower = member_name.strip().lower()
+    matches = df[
+        (df["first_name"].str.strip().str.lower() + " " +
+         df["last_name"].str.strip().str.lower() == name_lower) &
+        (df["dob"].astype(str) == dob_str)
+    ]
+
+    if len(matches) == 0:
+        return {"error": f"No member found with name '{member_name}' and DOB '{dob_str}'"}
+
+    if len(matches) > 1:
+        return {"error": f"Multiple members found with name '{member_name}' and DOB '{dob_str}'. Please contact support."}
+
+    member = _clean(matches.iloc[0].to_dict())
+    return {
+        "member_id": member["member_id"],
+        "member_name": f"{member['first_name']} {member['last_name']}",
+        "plan_type": member.get("plan_type")
+    }
 
 
 def check_roi(member_id: str, caller_name: str) -> dict:

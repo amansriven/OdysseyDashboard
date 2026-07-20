@@ -7,32 +7,12 @@ type Message = {
   timestamp: Date;
 };
 
-type AgentType = "claim" | "benefits" | "compliance";
-
-const AGENT_INFO = {
-  claim: {
-    name: "Claim Assistant",
-    description: "Process and explain claim details",
-    placeholder: "Enter claim ID (e.g., CLM000377)",
-  },
-  benefits: {
-    name: "Benefits Navigator",
-    description: "Answer coverage and prior auth questions",
-    placeholder: "Ask about coverage (e.g., Does CPT 29881 need prior auth on DSNP?)",
-  },
-  compliance: {
-    name: "Compliance Monitor",
-    description: "Triage operational risk flags",
-    placeholder: "Ask about compliance issues (e.g., What ROI gaps need attention?)",
-  },
-};
-
 export default function ChatBot() {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [selectedAgent, setSelectedAgent] = useState<AgentType>("claim");
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -61,8 +41,9 @@ export default function ChatBot() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          agent_type: selectedAgent,
+          agent_type: "orchestrator", // Always use orchestrator - it routes automatically
           message: userMessage.content,
+          session_id: sessionId, // Include session ID for conversation continuity
         }),
       });
 
@@ -71,6 +52,11 @@ export default function ChatBot() {
       }
 
       const data = await response.json();
+
+      // Store session ID for conversation continuity
+      if (data.session_id) {
+        setSessionId(data.session_id);
+      }
 
       const assistantMessage: Message = {
         role: "assistant",
@@ -98,6 +84,11 @@ export default function ChatBot() {
     }
   };
 
+  const clearChat = () => {
+    setMessages([]);
+    setSessionId(null);
+  };
+
   return (
     <>
       {/* Floating Chat Button */}
@@ -121,7 +112,7 @@ export default function ChatBot() {
               </div>
               <div>
                 <h3 className="text-white font-semibold text-sm">Odyssey AI</h3>
-                <p className="text-emerald-50 text-xs">{AGENT_INFO[selectedAgent].name}</p>
+                <p className="text-emerald-50 text-xs">Healthcare Assistant</p>
               </div>
             </div>
             <button
@@ -132,24 +123,11 @@ export default function ChatBot() {
             </button>
           </div>
 
-          {/* Agent Selector */}
+          {/* Welcome Message */}
           <div className="p-3 border-b border-slate-200 bg-slate-50">
-            <div className="flex gap-2">
-              {(Object.keys(AGENT_INFO) as AgentType[]).map((agent) => (
-                <button
-                  key={agent}
-                  onClick={() => setSelectedAgent(agent)}
-                  className={`flex-1 px-3 py-2 rounded-lg text-xs font-medium transition-all ${
-                    selectedAgent === agent
-                      ? "bg-emerald-500 text-white shadow-sm"
-                      : "bg-white text-slate-600 hover:bg-slate-100"
-                  }`}
-                >
-                  {AGENT_INFO[agent].name.split(" ")[0]}
-                </button>
-              ))}
-            </div>
-            <p className="text-xs text-slate-500 mt-2">{AGENT_INFO[selectedAgent].description}</p>
+            <p className="text-xs text-slate-600">
+              Ask me about claims, benefits, coverage, or compliance issues. I'll figure out how to help!
+            </p>
           </div>
 
           {/* Messages */}
@@ -158,7 +136,12 @@ export default function ChatBot() {
               <div className="text-center text-slate-400 text-sm mt-8">
                 <Bot className="w-12 h-12 mx-auto mb-3 text-slate-300" />
                 <p className="font-medium">How can I help you today?</p>
-                <p className="text-xs mt-1">{AGENT_INFO[selectedAgent].placeholder}</p>
+                <div className="text-xs mt-3 space-y-1 text-left max-w-xs mx-auto">
+                  <p className="text-slate-500 font-medium">Try asking:</p>
+                  <p className="text-slate-400">• "What does claim CLM000377 entail?"</p>
+                  <p className="text-slate-400">• "Does CPT 29881 need prior auth on DSNP?"</p>
+                  <p className="text-slate-400">• "What ROI gaps need attention?"</p>
+                </div>
               </div>
             )}
 
@@ -218,7 +201,7 @@ export default function ChatBot() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyPress={handleKeyPress}
-                placeholder={AGENT_INFO[selectedAgent].placeholder}
+                placeholder="Ask about claims, benefits, or compliance..."
                 className="flex-1 px-4 py-2.5 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent text-sm"
                 disabled={isLoading}
               />
